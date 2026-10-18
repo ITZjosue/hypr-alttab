@@ -1,13 +1,17 @@
 # hypr-dock
-### Interactive dock panel for Hyprland
+### Interactive dock panel and Alt+Tab switcher for Hyprland
 
-Translations: [`Русский`](README_RU.md)
+
+This repository ships two programs:
+- **`hypr-dock`** - the dock panel
+- **`hypr-alttab`** - an Alt+Tab window/workspace switcher with live previews (see [hypr-alttab](#hypr-alttab))
+
+> Fork of [lotos-linux/hypr-dock](https://github.com/lotos-linux/hypr-dock), which is no longer maintained.
 
 <img width="1360" height="768" alt="250725_16h02m52s_screenshot" src="https://github.com/user-attachments/assets/041d2cf6-13ba-4c89-a960-1903073ff2d4" />
 <img width="1360" height="768" alt="250725_16h03m09s_screenshot" src="https://github.com/user-attachments/assets/0c1ad8ca-37c1-4fd6-a48d-46f74c2d2609" />
 
 [![YouTube](https://img.shields.io/badge/YouTube-Video-FF0000?logo=youtube)](https://youtu.be/HHUZWHfNAl0?si=ZrRv2ggnPBEBS5oY)
-[![AUR](https://img.shields.io/badge/AUR-Package-1793D1?logo=arch-linux)](https://aur.archlinux.org/packages/hypr-dock)
 
 ## Installation
 
@@ -20,12 +24,18 @@ Translations: [`Русский`](README_RU.md)
 ### Installation
 ! The first build may take a very long time due to gtk3 bindings !
 ```bash
-git clone https://github.com/lotos-linux/hypr-dock.git
-cd hypr-dock
+git clone https://github.com/ITZjosue/hypr-alttab.git
+cd hypr-alttab
 make get
 make build
 make install
 ```
+`make build` and `make install` cover both programs. To work on one of them only:
+```bash
+make build-dock     && make install-dock
+make build-alttab   && make install-alttab
+```
+The install targets stop the running instance, so the next launch picks up the new binary.
 
 ### Uninstallation
 ```bash
@@ -123,7 +133,7 @@ Mode = none
 # THE "HYPR-DOCK" PROGRAM DOES NOT COLLECT, STORE, OR TRANSMIT ANY DATA.
 # WINDOW CAPTURE OCCURS ONLY FOR THE DURATION OF THE THUMBNAIL DISPLAY!
 #   
-# Source code: https://github.com/lotos-linux/hypr-dock
+# Source code: https://github.com/ITZjosue/hypr-alttab
 
 # Live preview fps (0 - ∞) (default 30)
 FPS = 30
@@ -179,7 +189,7 @@ You can edit it manually. But why? ¯\_(ツ)_/¯
 ### A theme consists of
 - `theme.conf`
 - `style.css`
-- A folder with `svg` files for indicating the number of running applications (see [themes_EN.md](https://github.com/lotos-linux/hypr-dock/blob/main/docs/customize/themes_EN.md))
+- A folder with `svg` files for indicating the number of running applications (see [themes.md](docs/customize/themes.md))
 
 ### Theme config
 ```ini
@@ -199,3 +209,87 @@ BorderRadius = 0
 Padding = 10
 ```
 #### Customize `style.css` as you wish. Detailed styling documentation will be provided later.
+
+## hypr-alttab
+
+A fullscreen-overlay Alt+Tab switcher with window previews. It can cycle either between **workspaces** (one card per workspace, showing its window layout) or between the **windows of the current workspace** (one card per window).
+
+### Add to `hyprland.conf`
+
+```text
+bind = ALT, Tab, exec, hypr-alttab
+bind = ALT SHIFT, Tab, exec, hypr-alttab
+```
+
+Do not also bind `cyclenext` to the same keys: both would fire and fight over focus.
+
+Optional blur:
+```text
+layerrule = blur true,match:namespace hypr-dock-switcher
+layerrule = ignore_alpha 0,match:namespace hypr-dock-switcher
+```
+
+### Controls
+
+| Key | Action |
+| --- | --- |
+| `Tab` / `Shift+Tab` | Next / previous entry |
+| `←` `→` | Previous / next entry |
+| `↑` `↓` | Move one row up / down |
+| Release `Alt` (or `Super`) / `Enter` | Focus the selected entry |
+| `Esc` | Close without switching |
+
+### How it runs
+
+The first launch starts a background daemon; later launches just tell it to show itself, which keeps it instant. The config is read **only when the daemon starts**, so after editing it run:
+
+```bash
+pkill hypr-alttab
+```
+
+The next Alt+Tab starts a fresh daemon with the new settings.
+
+Launch parameters:
+```text
+  -dev
+    	enable developer mode (reads the config from the dev config dir)
+```
+
+### Configuration: `~/.config/hypr-dock/hypr-alttab.conf`
+
+```ini
+[General]
+# Switcher size, as a percentage of the screen (1-100). It is always centered.
+WidthPercent = 100
+HeightPercent = 60
+
+# Font size (px)
+FontSize = 20
+
+# Maximum preview card width (px). Cards shrink automatically so that all
+# of them fit inside the switcher; this is only the upper bound.
+PreviewWidth = 400
+
+# Space between the switcher edge and the cards (px)
+Padding = 40
+
+# Gap between cards, horizontal and vertical (px)
+Spacing = 30
+
+# false = only show workspaces on the focused monitor
+ShowAllMonitors = false
+
+# App icon badge size on cards (0 = auto, >0 = fixed px)
+IconSize = 0
+
+# true  = cycle between workspaces (each card is a whole workspace)
+# false = cycle between the windows on the current workspace
+CycleWorkspaces = true
+
+# Allow the mouse to hover/click entries.
+# false = keyboard only; a cursor resting over a card cannot hijack the selection
+MouseSelection = false
+```
+
+#### Card sizing
+Up to 4 cards are placed per row. The switcher computes how many rows it needs and picks the largest card width (up to `PreviewWidth`) that fits the switcher area after `Padding` and `Spacing`. With very many windows cards stop shrinking at 120 px and the switcher becomes scrollable.
