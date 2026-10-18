@@ -26,6 +26,9 @@ type Switcher struct {
 	// Layout
 	monitors   []ipc.Monitor
 	monitorMap map[int]ipc.Monitor
+	areaW      int // Usable switcher size in px (screen minus margins)
+	areaH      int
+	cardW      int // Card width for the current render, fitted to the area
 
 	// State
 	selected        int                          // Index in s.clients
@@ -40,6 +43,7 @@ type Switcher struct {
 	// Daemon State
 	visible       bool
 	iconPathCache map[string]string
+	appCache      map[string]appInfo // window class -> desktop entry name/icon
 	renderGen     int
 }
 
@@ -69,6 +73,7 @@ func Run(confPath string) {
 		config:          LoadConfig(confPath),
 		visible:         true,
 		iconPathCache:   make(map[string]string),
+		appCache:        make(map[string]appInfo),
 		screenshotCache: make(map[string]*CachedScreenshot),
 	}
 	logTiming("Switcher instance created")
@@ -77,7 +82,10 @@ func Run(confPath string) {
 	log.Printf("Font Size: %d", s.config.FontSize)
 	log.Printf("Size: %d%% x %d%%", s.config.WidthPercent, s.config.HeightPercent)
 	log.Printf("Preview Width: %dpx", s.config.PreviewWidth)
+	log.Printf("Padding: %dpx, Spacing: %dpx", s.config.Padding, s.config.Spacing)
 	log.Printf("Show All Monitors: %v", s.config.ShowAllMonitors)
+	log.Printf("Cycle Workspaces: %v", s.config.CycleWorkspaces)
+	log.Printf("Mouse Selection: %v", s.config.MouseSelection)
 	log.Printf("-------------------------------")
 
 	// Singleton Check

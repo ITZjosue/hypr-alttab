@@ -2,8 +2,17 @@ package switcher
 
 import (
 	"fmt"
+	"log"
+	"time"
 
 	"hypr-dock/pkg/ipc"
+)
+
+const (
+	// focusAttempts bounds how hard we fight pointer-driven refocus.
+	focusAttempts = 3
+	// focusRetryDelay gives Hyprland time to settle before we re-check.
+	focusRetryDelay = 25 * time.Millisecond
 )
 
 // cycle moves selection by direction (1 for forward, -1 for backward)
@@ -12,7 +21,21 @@ func (s *Switcher) cycle(direction int) {
 		return
 	}
 
-	// ALWAYS Cycle Workspaces (MRU Workspace Mode)
+	// Window mode: walk the flat MRU window list of the current workspace.
+	if !s.config.CycleWorkspaces {
+		s.selected += direction
+		if s.selected >= len(s.clients) {
+			s.selected = 0
+		}
+		if s.selected < 0 {
+			s.selected = len(s.clients) - 1
+		}
+		debugLog("CYCLE: Window mode -> Client Idx %d", s.selected)
+		s.updateSelection()
+		return
+	}
+
+	// Workspace Mode (MRU Workspace Mode)
 	// We want to jump to the *first client* of the next/prev workspace in our list.
 	// Since s.clients is grouped by workspace and sorted by WS recency:
 
@@ -117,6 +140,29 @@ func (s *Switcher) moveGrid(rowDelta int) {
 	s.updateSelection()
 }
 
+// focusCommand builds the dispatch batch that focuses and raises target.
+func (s *Switcher) focusCommand(target ipc.Client) string {
+	// focuswindow alone is not enough: with input:follow_mouse the pointer
+	// can immediately re-focus whatever is still stacked above the target,
+	// so raise the window in the same batch.
+	cmd := fmt.Sprintf("[[BATCH]]dispatch focuswindow address:%s;", target.Address)
+
+	// Hyprland draws floating windows that were raised over a fullscreen
+	// window in a pass above it, and focusing the fullscreen window again
+	// does not undo that. Push the other windows on its workspace down,
+	// most recent first, so they keep their relative order underneath.
+	if target.Fullscreen != 0 {
+		for _, c := range s.clients {
+			if c.Address == target.Address || c.Workspace.Id != target.Workspace.Id || c.Pinned {
+				continue
+			}
+			cmd += fmt.Sprintf(" dispatch alterzorder bottom,address:%s;", c.Address)
+		}
+	}
+
+	return cmd + fmt.Sprintf(" dispatch alterzorder top,address:%s;", target.Address)
+}
+
 // confirm switches to the selected window and hides the switcher
 func (s *Switcher) confirm() {
 	if len(s.clients) > 0 && s.selected < len(s.clients) {
@@ -130,9 +176,30 @@ func (s *Switcher) confirm() {
 		s.visible = false
 		s.window.Hide()
 
+		// Built here rather than in the goroutine: it reads s.clients, which the
+		// next activation's loadData replaces.
+		cmd := s.focusCommand(selectedClient)
+
 		// Async Call
 		go func() {
-			ipc.Hyprctl(fmt.Sprintf("dispatch focuswindow address:%s", addr))
+			// Hiding the overlay makes Hyprland re-evaluate focus under the
+			// pointer. That re-evaluation is asynchronous and can land after our
+			// dispatch and undo it, so confirm the switch really took effect and
+			// retry before giving up.
+			for attempt := 0; attempt < focusAttempts; attempt++ {
+				if _, err := ipc.Hyprctl(cmd); err != nil {
+					log.Printf("Failed to focus %s: %v", addr, err)
+					return
+				}
+
+				time.Sleep(focusRetryDelay)
+
+				if active, err := ipc.GetActiveWindow(); err == nil && active.Address == addr {
+					return
+				}
+			}
+
+			log.Printf("Focus did not stick for %s after %d attempts", addr, focusAttempts)
 		}()
 	} else {
 		s.visible = false

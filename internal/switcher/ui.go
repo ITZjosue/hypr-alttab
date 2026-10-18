@@ -66,6 +66,9 @@ func (s *Switcher) calculateAndApplyMargins() {
 	marginH := (scrW * (100 - s.config.WidthPercent)) / 200
 	marginV := (scrH * (100 - s.config.HeightPercent)) / 200
 
+	s.areaW = scrW - 2*marginH
+	s.areaH = scrH - 2*marginV
+
 	debugLog("Screen: %dx%d (Found: %v)", scrW, scrH, foundMonitor)
 	debugLog("Margins: H=%d, V=%d", marginH, marginV)
 
@@ -122,13 +125,16 @@ func (s *Switcher) createMainLayout() {
 	mainOverlay.AddOverlay(s.debugBox)
 	s.window.Add(mainOverlay)
 
-	scroll.SetPolicy(gtk.POLICY_AUTOMATIC, gtk.POLICY_NEVER)
+	// Cards are sized to fit (see fitCardWidth); scrolling is only a fallback
+	scroll.SetPolicy(gtk.POLICY_AUTOMATIC, gtk.POLICY_AUTOMATIC)
 
 	// Main container (Vertical list of rows)
-	s.box, _ = gtk.BoxNew(gtk.ORIENTATION_VERTICAL, 30)
+	s.box, _ = gtk.BoxNew(gtk.ORIENTATION_VERTICAL, s.config.Spacing)
 	s.box.SetHAlign(gtk.ALIGN_CENTER)
 	s.box.SetVAlign(gtk.ALIGN_CENTER)
-	s.box.SetMarginStart(50)
-	s.box.SetMarginEnd(50)
+	s.box.SetMarginStart(s.config.Padding)
+	s.box.SetMarginEnd(s.config.Padding)
+	s.box.SetMarginTop(s.config.Padding)
+	s.box.SetMarginBottom(s.config.Padding)
 	scroll.Add(s.box)
 }

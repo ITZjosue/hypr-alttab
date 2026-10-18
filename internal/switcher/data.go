@@ -26,11 +26,13 @@ func (s *Switcher) loadData() {
 		return
 	}
 
-	// Find focused monitor
+	// Find focused monitor and the workspace currently shown on it
 	focusedMonitorID := -1
+	activeWorkspaceID := -1
 	for _, m := range s.monitors {
 		if m.Focused {
 			focusedMonitorID = m.Id
+			activeWorkspaceID = m.ActiveWorkspace.Id
 			break
 		}
 	}
@@ -46,6 +48,13 @@ func (s *Switcher) loadData() {
 		// Filter by Monitor if needed
 		if !s.config.ShowAllMonitors && focusedMonitorID != -1 {
 			if c.Monitor != focusedMonitorID {
+				continue
+			}
+		}
+
+		// Window mode: only the windows on the workspace we are looking at
+		if !s.config.CycleWorkspaces && activeWorkspaceID != -1 {
+			if c.Workspace.Id != activeWorkspaceID {
 				continue
 			}
 		}
@@ -102,7 +111,12 @@ func (s *Switcher) loadData() {
 	// Index 1 is the previous workspace.
 	targetIdx := 0
 
-	if len(s.workspaces) > 1 {
+	if !s.config.CycleWorkspaces {
+		// Window mode: preselect the previously focused window
+		if len(s.clients) > 1 {
+			targetIdx = 1
+		}
+	} else if len(s.workspaces) > 1 {
 		// Select the first window of the second workspace
 		targetWsID := s.workspaces[1]
 		indices := s.workspaceMap[targetWsID]

@@ -50,8 +50,9 @@ install-alttab:
 	@echo -e "$(GREEN)hypr-alttab installed$(RESET)"
 
 update-config:
-	sudo -rf $(PROJECT_CONFIG_DIR)/. $(SYSTEM_CONFIG_DIR)/
-	@echo -e "$(GREEN)Configs copied to $(SYSTEM_CONFIG_DIR)$(RESET)
+	sudo mkdir -p $(SYSTEM_CONFIG_DIR)
+	sudo cp -rf $(PROJECT_CONFIG_DIR)/. $(SYSTEM_CONFIG_DIR)/
+	@echo -e "$(GREEN)Configs copied to $(SYSTEM_CONFIG_DIR)$(RESET)"
 
 install-all:
 	$(MAKE) install-dock

@@ -33,6 +33,23 @@ func (s *Switcher) render() {
 	var currentRow *gtk.Box
 	itemsInRow := 0
 
+	// Window mode: one card per window instead of one card per workspace
+	if !s.config.CycleWorkspaces {
+		s.cardW = s.fitCardWidth(len(s.clients))
+		s.renderWindowGrid(currentGen, sem)
+		s.updateSelection()
+		s.box.ShowAll()
+		return
+	}
+
+	cards := 0
+	for _, wsID := range s.workspaces {
+		if len(s.workspaceMap[wsID]) > 0 {
+			cards++
+		}
+	}
+	s.cardW = s.fitCardWidth(cards)
+
 	// Iterate over SORTED Workspaces (Recency order)
 	for _, wsID := range s.workspaces {
 		indices := s.workspaceMap[wsID]
@@ -41,8 +58,7 @@ func (s *Switcher) render() {
 		}
 
 		if itemsInRow%GridCols == 0 {
-			currentRow, _ = gtk.BoxNew(gtk.ORIENTATION_HORIZONTAL, 30)
-			s.box.Add(currentRow)
+			currentRow = s.newRow()
 		}
 		itemsInRow++
 
@@ -52,6 +68,57 @@ func (s *Switcher) render() {
 
 	s.updateSelection()
 	s.box.ShowAll()
+}
+
+// newRow appends a centered row so a partially filled last row stays centered
+func (s *Switcher) newRow() *gtk.Box {
+	row, _ := gtk.BoxNew(gtk.ORIENTATION_HORIZONTAL, s.config.Spacing)
+	row.SetHAlign(gtk.ALIGN_CENTER)
+	s.box.Add(row)
+	return row
+}
+
+// fitCardWidth returns the card width that lets n cards fit inside the switcher
+// area (minus padding and spacing), never larger than PreviewWidth.
+func (s *Switcher) fitCardWidth(n int) int {
+	cardW := s.config.PreviewWidth
+	if n <= 0 || s.areaW <= 0 || s.areaH <= 0 {
+		return cardW
+	}
+
+	cols := GridCols
+	if n < cols {
+		cols = n
+	}
+	rows := (n + cols - 1) / cols
+
+	// Aspect ratio of the previews (they follow the monitor shape)
+	ratio := 9.0 / 16.0
+	if len(s.monitors) > 0 && s.monitors[0].Width > 0 && s.monitors[0].Height > 0 {
+		ratio = float64(s.monitors[0].Height) / float64(s.monitors[0].Width)
+	}
+
+	// Title row above each preview: label line height + box spacing
+	headerH := int(float64(s.config.FontSize)*0.8*1.6) + 5
+	// Selected cards draw a 4px border and a 15px glow
+	const border = 2 * 4
+
+	availW := s.areaW - 2*s.config.Padding - (cols-1)*s.config.Spacing
+	availH := s.areaH - 2*s.config.Padding - (rows-1)*s.config.Spacing - rows*(headerH+border)
+
+	if byW := availW/cols - border; byW < cardW {
+		cardW = byW
+	}
+	if byH := int(float64(availH/rows) / ratio); byH < cardW {
+		cardW = byH
+	}
+
+	// Below this previews become unreadable; let the scroll window take over
+	const minCardW = 120
+	if cardW < minCardW {
+		cardW = minCardW
+	}
+	return cardW
 }
 
 // createWorkspaceCard creates a card for a single workspace
@@ -64,7 +131,7 @@ func (s *Switcher) createWorkspaceCard(wsID int, indices []int, currentRow *gtk.
 	}
 
 	// Calculate scale
-	cardWidth := float64(s.config.PreviewWidth)
+	cardWidth := float64(s.cardW)
 	if mon.Width <= 0 {
 		mon.Width = 1920 // Fallback
 	}
@@ -87,12 +154,8 @@ func (s *Switcher) createWorkspaceCard(wsID int, indices []int, currentRow *gtk.
 	wsNumBox.Add(wsNumLabel)
 	headerBox.PackStart(wsNumBox, false, false, 0)
 
-	// 2. Window Title of the MOST RECENT (first) client
-	titleText := firstClient.Class
-	if firstClient.Title != "" && firstClient.Title != firstClient.Class {
-		titleText = fmt.Sprintf("%s - %s", firstClient.Class, firstClient.Title)
-	}
-	titleLabel, _ := gtk.LabelNew(titleText)
+	// 2. App name and window title of the MOST RECENT (first) client
+	titleLabel, _ := gtk.LabelNew(s.windowLabelFor(firstClient))
 	titleLabel.SetHAlign(gtk.ALIGN_START)
 	titleLabel.SetEllipsize(pango.ELLIPSIZE_END)
 	titleLabel.SetMaxWidthChars(25)
@@ -114,6 +177,94 @@ func (s *Switcher) createWorkspaceCard(wsID int, indices []int, currentRow *gtk.
 		idx := indices[i]
 		s.createWindowWidget(idx, mon, scale, fixed, currentGen, sem)
 	}
+}
+
+// renderWindowGrid lays out one card per window, wrapping every GridCols items.
+func (s *Switcher) renderWindowGrid(currentGen int, sem chan struct{}) {
+	var currentRow *gtk.Box
+
+	for idx := range s.clients {
+		if idx%GridCols == 0 {
+			currentRow = s.newRow()
+		}
+		s.createWindowCard(idx, currentRow, currentGen, sem)
+	}
+}
+
+// createWindowCard builds a full-size preview card for a single window.
+func (s *Switcher) createWindowCard(idx int, currentRow *gtk.Box, currentGen int, sem chan struct{}) {
+	c := s.clients[idx]
+
+	mon, ok := s.monitorMap[c.Monitor]
+	if !ok && len(s.monitors) > 0 {
+		mon = s.monitors[0]
+	}
+	if mon.Width <= 0 {
+		mon.Width = 1920 // Fallback
+	}
+	if mon.Height <= 0 {
+		mon.Height = 1080 // Fallback
+	}
+
+	// Card keeps the monitor aspect ratio so previews are not distorted
+	cardW := s.cardW
+	cardH := int(float64(cardW) * float64(mon.Height) / float64(mon.Width))
+
+	cardBox, _ := gtk.BoxNew(gtk.ORIENTATION_VERTICAL, 5)
+
+	// Header: app display name, then the window title
+	titleLabel, _ := gtk.LabelNew(s.windowLabelFor(c))
+	titleLabel.SetHAlign(gtk.ALIGN_START)
+	titleLabel.SetEllipsize(pango.ELLIPSIZE_END)
+	titleLabel.SetMaxWidthChars(25)
+	utils.AddStyle(titleLabel, "label { color: #ffffff; font-weight: bold; font-size: 0.8em; margin-left: 5px; }")
+	cardBox.Add(titleLabel)
+
+	// Preview body
+	winBox, _ := gtk.BoxNew(gtk.ORIENTATION_VERTICAL, 0)
+	winBox.SetSizeRequest(cardW, cardH)
+
+	ctx, _ := winBox.GetStyleContext()
+	ctx.AddClass("switcher-item")
+
+	overlay, _ := gtk.OverlayNew()
+	winBox.PackStart(overlay, true, true, 0)
+
+	centerBox, _ := gtk.BoxNew(gtk.ORIENTATION_VERTICAL, 0)
+	centerBox.SetVAlign(gtk.ALIGN_CENTER)
+	centerBox.SetHAlign(gtk.ALIGN_CENTER)
+	overlay.Add(centerBox)
+
+	// Icon placeholder until the screenshot lands
+	iconName := s.iconNameFor(c)
+	iconSize := cardW / 3
+	if iconSize > 128 {
+		iconSize = 128
+	}
+	if iconSize < 16 {
+		iconSize = 16
+	}
+
+	icon, _ := gtk.ImageNewFromIconName("image-loading", gtk.ICON_SIZE_DIALOG)
+	icon.SetPixelSize(iconSize)
+	icon.SetHAlign(gtk.ALIGN_CENTER)
+	centerBox.Add(icon)
+
+	s.loadIconAsync(icon, iconName, iconSize, currentGen)
+	s.setupScreenshot(c, cardW, cardH, centerBox, overlay, icon, iconName, currentGen, sem)
+
+	// Mouse Interaction (EventBox)
+	eventBox, _ := gtk.EventBoxNew()
+	eventBox.Add(winBox)
+	if s.config.MouseSelection {
+		eventBox.Connect("button-press-event", s.createWindowClickHandler())
+		eventBox.Connect("enter-notify-event", s.createWindowHoverHandler(idx))
+	}
+
+	cardBox.Add(eventBox)
+	currentRow.Add(cardBox)
+
+	s.widgets[idx] = &winBox.Widget
 }
 
 // createWindowWidget creates a widget for a single window
@@ -158,7 +309,7 @@ func (s *Switcher) createWindowWidget(idx int, mon ipc.Monitor, scale float64, f
 	overlay.Add(centerBox)
 
 	// 1. Render Icon
-	iconName := c.Class
+	iconName := s.iconNameFor(c)
 	iconSize := scaledW / 2
 	if iconSize > 128 {
 		iconSize = 128
@@ -183,11 +334,15 @@ func (s *Switcher) createWindowWidget(idx int, mon ipc.Monitor, scale float64, f
 	eventBox, _ := gtk.EventBoxNew()
 	eventBox.Add(winBox)
 
-	// Click to confirm
-	eventBox.Connect("button-press-event", s.createWindowClickHandler())
+	// Pointer selection is opt-in: a cursor resting over a card would otherwise
+	// overwrite the keyboard selection while cycling.
+	if s.config.MouseSelection {
+		// Click to confirm
+		eventBox.Connect("button-press-event", s.createWindowClickHandler())
 
-	// Hover to select
-	eventBox.Connect("enter-notify-event", s.createWindowHoverHandler(idx))
+		// Hover to select
+		eventBox.Connect("enter-notify-event", s.createWindowHoverHandler(idx))
+	}
 
 	fixed.Put(eventBox, scaledX, scaledY)
 	s.widgets[idx] = &winBox.Widget
@@ -197,7 +352,7 @@ func (s *Switcher) createWindowWidget(idx int, mon ipc.Monitor, scale float64, f
 func (s *Switcher) setupScreenshot(c ipc.Client, w, h int, centerBox *gtk.Box, overlay *gtk.Overlay, icon *gtk.Image, iconName string, currentGen int, sem chan struct{}) {
 	_, err := hysc.StreamNew(c.Address, hclog.Default())
 	if err == nil {
-		fingerprint := getWindowFingerprint(c)
+		fingerprint := fmt.Sprintf("%s@%dx%d", getWindowFingerprint(c), w, h)
 		cached, exists := s.screenshotCache[fingerprint]
 
 		// Smart Caching Logic

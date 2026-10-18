@@ -11,10 +11,72 @@ import (
 	"github.com/gotk3/gotk3/gtk"
 	"github.com/hashicorp/go-hclog"
 
+	"hypr-dock/internal/desktop"
 	"hypr-dock/internal/hysc"
 	"hypr-dock/internal/pkg/utils"
 	"hypr-dock/pkg/ipc"
 )
+
+// appInfo is what the switcher shows for a window, taken from its .desktop entry.
+type appInfo struct {
+	name string
+	icon string
+}
+
+// appInfoFor resolves a window through its .desktop entry, the same way the
+// dock does. Window classes often differ from both the app's display name
+// (com.slack.Slack -> Slack) and its icon (brave-browser -> brave-desktop).
+func (s *Switcher) appInfoFor(c ipc.Client) appInfo {
+	if info, ok := s.appCache[c.Class]; ok {
+		return info
+	}
+
+	// On error desktop.New still returns an App whose name and icon are the class
+	app, err := desktop.New(c.Class)
+	info := appInfo{name: app.GetName(), icon: app.GetIcon()}
+
+	// No desktop entry: reverse-DNS classes still read better as their last
+	// segment (md.obsidian.Obsidian -> Obsidian)
+	if err != nil {
+		if i := strings.LastIndex(c.Class, "."); i >= 0 && i < len(c.Class)-1 {
+			info.name = c.Class[i+1:]
+		}
+	}
+
+	s.appCache[c.Class] = info
+	return info
+}
+
+// iconNameFor returns the icon name or path to show for a window.
+func (s *Switcher) iconNameFor(c ipc.Client) string {
+	return s.appInfoFor(c).icon
+}
+
+// appNameFor returns the display name to show for a window.
+func (s *Switcher) appNameFor(c ipc.Client) string {
+	return s.appInfoFor(c).name
+}
+
+// windowLabelFor returns "App - window title", or just "App" when the title
+// adds nothing.
+func (s *Switcher) windowLabelFor(c ipc.Client) string {
+	name := s.appNameFor(c)
+	title := strings.TrimSpace(c.Title)
+
+	// Many apps already end their title with their own name
+	// ("m4tr1x - bsale - Slack", "page — Zen Browser"); don't show it twice.
+	for _, sep := range []string{" - ", " — ", " – "} {
+		if suffix := sep + name; len(title) > len(suffix) && strings.EqualFold(title[len(title)-len(suffix):], suffix) {
+			title = strings.TrimSpace(title[:len(title)-len(suffix)])
+			break
+		}
+	}
+
+	if title == "" || strings.EqualFold(title, name) {
+		return name
+	}
+	return name + " - " + title
+}
 
 // findIconPath searches for an icon file in common directories
 func (s *Switcher) findIconPath(name string) string {
@@ -224,7 +286,7 @@ func (s *Switcher) UpdatePreviews() {
 				return
 			}
 
-			stream.SetFixedSize(s.config.PreviewWidth, int(float64(s.config.PreviewWidth)*0.6)) // Approx
+			stream.SetFixedSize(s.cardW, int(float64(s.cardW)*0.6)) // Approx
 			stream.SetBorderRadius(4)
 
 			// Capture
